@@ -35,6 +35,12 @@
     }
   },
   "mcp": {
+    "servers": {
+      "datadog": {
+        "type": "remote",
+        "url": "https://mcp.datadoghq.com/v1/mcp"
+      }
+    },
     "chrome-devtools": {
       "type": "local",
       "command": [
