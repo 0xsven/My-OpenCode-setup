@@ -12,7 +12,8 @@
       "permission": {
         "task": {
           "*": "deny",
-          "explore": "allow",
+          "quick-plan": "allow",
+          "deep-plan": "allow",
           "visual": "allow"
         }
       }

@@ -16,10 +16,52 @@ test("compaction configures GPT-6.1 Sol/medium without replacing the native prom
   // Both readers apply singular agent.permission; a permission nested under
   // native agents is silently discarded instead of constraining delegation.
   assert.deepEqual(Object.entries(config.agent.plan.permission.task), [
-    ["*", "deny"], ["explore", "allow"], ["visual", "allow"],
+    ["*", "deny"], ["quick-plan", "allow"], ["deep-plan", "allow"], ["visual", "allow"],
   ])
   assert.deepEqual(config.agent.general.permission, { task: "deny" })
   assert.equal(Object.hasOwn(config, "agents"), false)
+})
+
+test("planning workers deny writes and limit delegation to read-only research", () => {
+  const expectedPermissionBlock = `permission:
+  "*": deny
+  read:
+    "*": allow
+    "*.env": ask
+    "*.env.*": ask
+    "*.env.example": allow
+  glob: allow
+  grep: allow
+  list: allow
+  webfetch: allow
+  websearch: allow
+  skill: allow
+  edit: deny
+  bash: deny
+  task: deny`
+
+  const assertCanonicalPermissions = (source, label, expected = expectedPermissionBlock) => {
+    const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)
+    assert.ok(frontmatter, `${label} has frontmatter`)
+    const lines = frontmatter[1].split("\n")
+    const start = lines.indexOf("permission:")
+    assert.notEqual(start, -1, `${label} has a permission mapping`)
+    let end = start + 1
+    while (end < lines.length && lines[end].startsWith("  ")) end++
+    assert.equal(lines.slice(start, end).join("\n"), expected, label)
+  }
+
+  for (const name of ["quick-plan", "deep-plan"]) {
+    const source = readFileSync(new URL(`../agents/${name}.md`, import.meta.url), "utf8")
+    const expected = name === "deep-plan"
+      ? expectedPermissionBlock.replace("  task: deny", '  task:\n    "*": deny\n    quick-plan: allow')
+      : expectedPermissionBlock
+    assertCanonicalPermissions(source, name, expected)
+  }
+
+  const validFrontmatter = `---\n${expectedPermissionBlock}\n---`
+  assert.throws(() => assertCanonicalPermissions(validFrontmatter.replace("permission:\n", ""), "missing-header"))
+  assert.throws(() => assertCanonicalPermissions(validFrontmatter.replace("task: deny", "task: deny\n  chrome-devtools_evaluate_script: allow"), "extra-mcp-allow"))
 })
 
 test("automatic compaction preserves a 15k recent tail without changing pruning or turn limits", () => {
