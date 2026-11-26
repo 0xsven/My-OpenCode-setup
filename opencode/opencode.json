@@ -1,38 +1,35 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "openai/gpt-6.1-sol",
+  "model": "openai/gpt-6.2-sol",
   "default_agent": "plan",
+  "experimental": { "subagent_depth": 2 },
   "compaction": {
     "auto": true,
-    "reserved": 32000,
-    "preserve_recent_tokens": 15000
+    "buffer": 32000,
+    "keep": { "tokens": 15000 }
   },
-  "agent": {
+  "agents": {
     "plan": {
-      "permission": {
-        "task": {
-          "*": "deny",
-          "quick-plan": "allow",
-          "deep-plan": "allow",
-          "visual": "allow"
-        }
-      }
+      "permissions": [
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "gh pr view *", "effect": "allow" },
+        { "action": "shell", "resource": "gh pr diff *", "effect": "allow" },
+        { "action": "shell", "resource": "gh pr list *", "effect": "allow" },
+        { "action": "shell", "resource": "gh pr checks *", "effect": "allow" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "quick-read", "effect": "allow" },
+        { "action": "subagent", "resource": "general-read", "effect": "allow" },
+        { "action": "subagent", "resource": "deep-read", "effect": "allow" }
+      ]
     },
     "explore": {
-      "model": "openai/gpt-6-luna",
-      "variant": "low"
+      "disabled": true
     },
     "general": {
-      "model": "openai/gpt-6.1-sol",
-      "variant": "medium",
-      "permission": {
-        "task": "deny"
-      }
+      "disabled": true
     },
     "compaction": {
-      "model": "openai/gpt-6.1-sol",
-      "variant": "medium",
-      "options": { "reasoningEffort": "medium" }
+      "model": "openai/gpt-6.2-sol#medium"
     }
   },
   "mcp": {
@@ -40,79 +37,46 @@
       "datadog": {
         "type": "remote",
         "url": "https://mcp.datadoghq.com/v1/mcp"
+      },
+      "browse": {
+        "type": "local",
+        "command": ["{env:HOME}/.local/bin/browse", "mcp"],
+        "cwd": "{env:HOME}",
+        "environment": { "OPENCODE_BROWSER_RUNTIME": "auto-update" },
+        "pool": true
+      },
+      "figma-mcp-desktop": {
+        "type": "remote",
+        "url": "http://127.0.0.1:3845/mcp"
       }
-    },
-    "chrome-devtools": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--isolated=true",
-        "--no-usage-statistics"
-      ]
-    },
-    "figma-mcp-desktop": {
-      "type": "remote",
-      "url": "http://127.0.0.1:3845/mcp"
     }
   },
-  "provider": {
+  "providers": {
     "openai": {
-      "options": {
+      "settings": {
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
-        "textVerbosity": "low",
+        "textVerbosity": "low"
+      },
+      "body": {
         "include": ["reasoning.encrypted_content"],
         "store": false
       },
       "models": {
-        "gpt-6.1-sol": {
-          "name": "GPT 6.1 Sol (OAuth)",
+        "gpt-6.2-sol": {
+          "name": "GPT 6.2 Sol (OAuth)",
           "limit": { "context": 272000, "input": 272000, "output": 128000 },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "variants": {
-            "none": { "reasoningEffort": "none" },
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "xhigh": { "reasoningEffort": "xhigh" },
-            "max": { "reasoningEffort": "max" }
-          }
+          "capabilities": { "input": ["text", "image"], "output": ["text"] }
         },
         "gpt-6-luna": {
           "name": "GPT 6 Luna (OAuth)",
           "limit": { "context": 272000, "input": 272000, "output": 128000 },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "variants": {
-            "none": { "reasoningEffort": "none" },
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "xhigh": { "reasoningEffort": "xhigh" },
-            "max": { "reasoningEffort": "max" }
-          }
+          "capabilities": { "input": ["text", "image"], "output": ["text"] }
         },
-        "gpt-6-astra": {
-          "name": "GPT 6 Astra (OAuth)",
+        "gpt-6.2-astra": {
+          "name": "GPT 6.2 Astra (OAuth)",
           "limit": { "context": 272000, "input": 272000, "output": 128000 },
-          "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
-          },
-          "variants": {
-            "none": { "reasoningEffort": "none" },
-            "low": { "reasoningEffort": "low" },
-            "medium": { "reasoningEffort": "medium" },
-            "high": { "reasoningEffort": "high" },
-            "xhigh": { "reasoningEffort": "xhigh" }
-          }
+          "capabilities": { "input": ["text", "image"], "output": ["text"] }
         }
       }
     }

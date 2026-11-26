@@ -14,7 +14,7 @@ const hook = async () => {
   return handler
 }
 
-const input = () => ({ kind: "compaction", model: { providerID: "openai", id: "gpt-6.1-sol" } })
+const input = () => ({ kind: "compaction", model: { providerID: "openai", id: "gpt-6.2-sol" } })
 
 test("forces medium for OpenAI compaction and preserves existing options", async () => {
   const options = { temperature: 0.2, reasoningEffort: "xhigh", custom: true }

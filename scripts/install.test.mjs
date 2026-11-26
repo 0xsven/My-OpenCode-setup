@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
-import { lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import fs, { lstat, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { basename, join, resolve } from "node:path"
 import test from "node:test"
 import { MANAGED_TARGETS, install, planTargets, pointsTo, restore } from "./install.mjs"
 
@@ -97,6 +98,155 @@ test("refuses restore over user-replaced files before changing any managed targe
   }
 })
 
+test("uninstalls the selected target across additive batches without touching untracked links", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-setup-incremental-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const target = join(root, "target")
+  const other = join(root, "other")
+  const options = { yes: true, backupRoot: backupRoot(root) }
+  const entry = (name) => planTargets(target).find(({ entry }) => entry === name)
+  const config = entry("opencode.json")
+  const additive = entry("skills/pr-review")
+  const untracked = entry("skills/visual-qa")
+  await mkdir(join(target, "skills"), { recursive: true })
+  await writeFile(config.destination, "first original")
+  await symlink(additive.source, additive.destination)
+  await symlink(untracked.source, untracked.destination)
+  const first = await install(target, options)
+  assert.deepEqual(first.untracked, ["skills/visual-qa", "skills/pr-review"])
+
+  await rm(additive.destination)
+  await symlink("../local-review", additive.destination)
+  await rm(config.destination)
+  await writeFile(config.destination, "later replacement")
+  const second = await install(target, options)
+  assert.deepEqual(second.changes, ["opencode.json", "skills/pr-review"])
+  await install(other, options)
+  await mkdir(join(options.backupRoot, "v1-to-v2-backup"))
+  const legacy = join(options.backupRoot, "legacy")
+  await mkdir(legacy)
+  await writeFile(join(legacy, "manifest.json"), JSON.stringify({ target, moved: [], managed: MANAGED_TARGETS }))
+
+  await rm(additive.destination)
+  await writeFile(additive.destination, "keep me")
+  await assert.rejects(restore(target, options), /unmanaged target: skills\/pr-review/)
+  assert.equal(await readFile(additive.destination, "utf8"), "keep me")
+  assert(await pointsTo(config.destination, config.source))
+  assert(await pointsTo(entry("plugins").destination, entry("plugins").source))
+  await rm(additive.destination)
+
+  const preview = await restore(target, { ...options, dryRun: true })
+  assert.deepEqual(preview.changes, MANAGED_TARGETS.filter((name) => name !== untracked.entry))
+  assert.deepEqual(preview.untracked, [untracked.entry])
+  assert(await pointsTo(config.destination, config.source))
+  const restored = await restore(target, options)
+  assert.deepEqual(restored.changes, preview.changes)
+  assert.equal(await readFile(config.destination, "utf8"), "first original")
+  assert.equal(await readlink(additive.destination), "../local-review")
+  assert(await pointsTo(untracked.destination, untracked.source))
+  assert.equal(await readFile(join(second.backup, config.entry), "utf8"), "later replacement")
+  assert.equal(await readFile(join(first.backup, config.entry), "utf8"), "first original")
+  for (const removed of MANAGED_TARGETS.filter((name) => ![config.entry, additive.entry, untracked.entry].includes(name))) {
+    await assert.rejects(lstat(entry(removed).destination), { code: "ENOENT" })
+  }
+  for (const { destination, source } of planTargets(other)) assert(await pointsTo(destination, source))
+
+  const again = await restore(target, options)
+  assert.deepEqual(again.changes, [])
+  assert.deepEqual(again.untracked, [untracked.entry])
+})
+
+test("starts a fresh baseline on reinstall after a complete uninstall", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-setup-new-cycle-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const target = join(root, "target")
+  const options = { yes: true, backupRoot: backupRoot(root) }
+  const config = join(target, "opencode.json")
+  await mkdir(target)
+  await writeFile(config, "previous original")
+  const first = await install(target, options)
+  await restore(target, options)
+  await rm(config)
+
+  await install(target, options)
+  await assert.rejects(restore(target, { ...options, backup: first.backup }), /latest active batch/)
+  await restore(target, options)
+  await assert.rejects(lstat(config), { code: "ENOENT" })
+  assert.equal(await readFile(join(first.backup, "opencode.json"), "utf8"), "previous original")
+})
+
+test("blocks subsequent operations if uninstall restored files but could not clear history", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-setup-failed-uninstall-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const target = join(root, "target")
+  const options = { yes: true, backupRoot: backupRoot(root) }
+  const config = join(target, "opencode.json")
+  await mkdir(target)
+  await writeFile(config, "original")
+  const installed = await install(target, options)
+  const files = await readdir(options.backupRoot)
+  const history = join(options.backupRoot, files.find((file) => file.startsWith("active-")))
+
+  const originalRm = fs.rm
+  fs.rm = async (path, ...args) => {
+    if (path === history) throw new Error("injected history cleanup failure")
+    return originalRm(path, ...args)
+  }
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(restore(target, options), /injected history cleanup failure/)
+  } finally {
+    fs.rm = originalRm
+    syncBuiltinESMExports()
+  }
+
+  const marker = `${history}.operation`
+  assert.deepEqual(JSON.parse(await readFile(marker, "utf8")).backups, [installed.backup])
+  assert.equal(await readFile(config, "utf8"), "original")
+  await writeFile(config, "new user file")
+  await assert.rejects(install(target, options), (error) => error.message.includes(marker))
+  await assert.rejects(restore(target, options), /operation marker/)
+  await assert.rejects(restore(target, { ...options, dryRun: true }), /operation marker/)
+  assert.equal(await readFile(config, "utf8"), "new user file")
+  assert.equal(await readFile(join(installed.backup, "opencode.json"), "utf8"), "original")
+  assert.deepEqual((await readdir(options.backupRoot)).sort(), [...files, basename(marker)].sort())
+  await install(join(root, "other"), options)
+})
+
+test("preflights saved originals before install and releases the marker on preflight failure", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-setup-missing-original-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const target = join(root, "target")
+  const options = { yes: true, backupRoot: backupRoot(root) }
+  await mkdir(target)
+  await writeFile(join(target, "opencode.json"), "original")
+  const installed = await install(target, options)
+  const saved = join(installed.backup, "opencode.json")
+  await rm(saved)
+  const { destination, source } = planTargets(target).find(({ entry }) => entry === "plugins")
+  await rm(destination)
+  await writeFile(destination, "leave untouched")
+
+  await assert.rejects(install(target, options), /Backup target is missing: opencode.json/)
+  assert.equal(await readFile(destination, "utf8"), "leave untouched")
+  await writeFile(saved, "original")
+  await install(target, options)
+  assert(await pointsTo(destination, source))
+})
+
+test("preflights nested install destinations without following an external skills directory", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "opencode-setup-symlink-parent-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const target = join(root, "target")
+  const external = join(root, "external")
+  await mkdir(target)
+  await mkdir(external)
+  await symlink(external, join(target, "skills"))
+  await assert.rejects(install(target, { yes: true, backupRoot: backupRoot(root) }), /symlink parent/)
+  await assert.rejects(lstat(join(target, "opencode.json")), { code: "ENOENT" })
+  await assert.rejects(lstat(join(external, "visual-qa")), { code: "ENOENT" })
+})
+
 test("recognizes only symlinks to the exact repository source", async () => {
   const directory = await mkdtemp(join(tmpdir(), "opencode-setup-"))
   const source = join(directory, "source")
@@ -114,8 +264,9 @@ test("recognizes only symlinks to the exact repository source", async () => {
 
 test("allows a non-mutating install preview without confirmation", async () => {
   const target = await mkdtemp(join(tmpdir(), "opencode-setup-preview-"))
-  const result = await install(target, { dryRun: true })
+  const result = await install(target, { dryRun: true, backupRoot: backupRoot(target) })
   assert.equal(result.action, "install")
   assert.equal(result.changes.length, MANAGED_TARGETS.length)
+  assert.deepEqual(await readdir(target), [])
   await rm(target, { recursive: true, force: true })
 })

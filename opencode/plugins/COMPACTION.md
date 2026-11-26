@@ -2,11 +2,11 @@
 
 Configured in `../opencode.json`:
 
-- The hidden stock `compaction` agent is configured with `openai/gpt-6.1-sol`
+- The hidden stock `compaction` agent is configured with `openai/gpt-6.2-sol`
   and the `medium` variant.
 - Its intended reasoning effort is `medium`.
 - All three configured OpenAI models explicitly declare `context: 272000` and
-  `input: 272000`: GPT-6.1 Sol, GPT-6 Luna, and GPT-6 Astra. These are
+  `input: 272000`: GPT-6.2 Sol, GPT-6 Luna, and GPT-6.2 Astra. These are
   deliberate local caps, not the models' native capacities. Output limits remain `128000`.
 - Automatic compaction uses a 32,000-token buffer. The configured
   `limit.input - 32000` gives a trigger of approximately 240,000
